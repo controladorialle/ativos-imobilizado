@@ -1,0 +1,88 @@
+"""Sistema de Gestão de Ativos Imobilizados - entry point."""
+import streamlit as st
+from supabase import create_client
+
+st.set_page_config(
+    page_title="Ativos Imobilizados",
+    page_icon="🏢",
+    layout="wide",
+)
+
+
+@st.cache_resource
+def sb():
+    """Cliente Supabase reutilizável."""
+    url = st.secrets["supabase"]["url"]
+    key = st.secrets["supabase"]["anon_key"]
+    return create_client(url, key)
+
+
+def login_form():
+    st.title("🏢 Gestão de Ativos Imobilizados")
+    st.markdown("Faça login para continuar")
+    with st.form("login"):
+        email = st.text_input("E-mail")
+        senha = st.text_input("Senha", type="password")
+        ok = st.form_submit_button("Entrar", type="primary")
+    if ok:
+        try:
+            sess = sb().auth.sign_in_with_password(
+                {"email": email, "password": senha}
+            )
+            st.session_state["user"] = sess.user.email
+            st.rerun()
+        except Exception as e:
+            st.error(f"Falha no login: {e}")
+
+
+def main():
+    if "user" not in st.session_state:
+        login_form()
+        return
+
+    st.sidebar.success(f"Logado: {st.session_state['user']}")
+    if st.sidebar.button("Sair"):
+        try:
+            sb().auth.sign_out()
+        except Exception:
+            pass
+        del st.session_state["user"]
+        st.rerun()
+
+    st.title("🏢 Gestão de Ativos Imobilizados")
+    st.markdown(
+        """
+        Use o menu lateral para navegar:
+
+        - **Importar** — carregue as bases XLSX cruas (contábil e compras)
+        - **Dashboard** — saldo, aquisições e movimentação por categoria
+        - **Conciliação** — divergências entre contábil e compras
+        - **Revisão Manual** — NFs com match aproximado para o usuário resolver
+        - **Operacional** — lançamentos manuais (aquisição/baixa)
+        - **Depreciação** — análise paralela de depreciação acumulada
+        """
+    )
+
+    # Métricas rápidas na home
+    try:
+        sup = sb()
+        importacoes = sup.table("importacoes").select("*").order(
+            "criado_em", desc=True
+        ).limit(5).execute().data
+        if importacoes:
+            st.subheader("Últimas importações")
+            for imp in importacoes:
+                st.write(
+                    f"📥 **{imp['tipo']}** — {imp['nome_arquivo']} — "
+                    f"{imp['linhas_gravadas']} linhas gravadas — "
+                    f"{imp['linhas_bloqueadas']} duplicatas bloqueadas — "
+                    f"{imp['criado_em'][:16]}"
+                )
+        else:
+            st.info("Nenhuma importação registrada ainda. Comece pela página **Importar**.")
+    except Exception as e:
+        st.warning(f"Não foi possível carregar o histórico de importações: {e}")
+
+
+if __name__ == "__main__":
+    main()
