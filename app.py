@@ -1,6 +1,14 @@
-"""Sistema de Gestão de Ativos Imobilizados - entry point."""
+"""Sistema de Gestão de Ativos Imobilizados - chaves embutidas (emergência)."""
 import streamlit as st
-from supabase import create_client, ClientOptions
+from supabase import create_client
+
+# ============================================================
+# CHAVES DO SUPABASE — SUBSTITUA AS 3 LINHAS ABAIXO
+# ============================================================
+SUPABASE_URL = "https://vyxcttiiemzaxqjxtspc.supabase.co"
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ5eGN0dGlpZW16YXhxanh0c3BjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMjA3MjUsImV4cCI6MjA5NDY5NjcyNX0.kzwqS7gZSv8xVuuAW2eH4YLw2JF9ECIxK0X0hH5JL9g"
+SUPABASE_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ5eGN0dGlpZW16YXhxanh0c3BjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTEyMDcyNSwiZXhwIjoyMDk0Njk2NzI1fQ.ccCE5X00sqW5AFu3hRX5vZhKMIPBf0Px-cEOeC0oFtw"
+# ============================================================
 
 st.set_page_config(
     page_title="Ativos Imobilizados",
@@ -11,22 +19,7 @@ st.set_page_config(
 
 @st.cache_resource
 def sb():
-    """Cliente Supabase reutilizável.
-
-    Limpa URL e chave para evitar problemas de espaços/duplicação.
-    Funciona com chaves Legacy (eyJ...) e novas (sb_publishable_...).
-    """
-    url = st.secrets["supabase"]["url"].strip()
-    # Remove https:// duplicado se houver
-    while url.startswith("https://https://"):
-        url = url.replace("https://https://", "https://", 1)
-    if not url.startswith("https://"):
-        url = "https://" + url
-    url = url.rstrip("/")
-
-    key = st.secrets["supabase"]["anon_key"].strip().replace("\n", "").replace("\r", "")
-
-    return create_client(url, key)
+    return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 
 def login_form():
@@ -45,12 +38,10 @@ def login_form():
             st.rerun()
         except Exception as e:
             st.error(f"Falha no login: {e}")
-            with st.expander("Diagnóstico (clique para ver detalhes)"):
-                url_dbg = st.secrets["supabase"]["url"]
-                key_dbg = st.secrets["supabase"]["anon_key"]
-                st.write(f"URL lida: `{url_dbg}`")
-                st.write(f"Chave (primeiros 20): `{key_dbg[:20]}`")
-                st.write(f"Tamanho da chave: {len(key_dbg)}")
+            with st.expander("Diagnóstico"):
+                st.write(f"URL: `{SUPABASE_URL}`")
+                st.write(f"Chave (primeiros 20): `{SUPABASE_ANON_KEY[:20]}`")
+                st.write(f"Tamanho: {len(SUPABASE_ANON_KEY)}")
                 st.code(str(e))
 
 
@@ -73,12 +64,12 @@ def main():
         """
         Use o menu lateral para navegar:
 
-        - **Importar** — carregue as bases XLSX cruas (contábil e compras)
-        - **Dashboard** — saldo, aquisições e movimentação por categoria
-        - **Conciliação** — divergências entre contábil e compras
-        - **Revisão Manual** — NFs com match aproximado para o usuário resolver
-        - **Operacional** — lançamentos manuais (aquisição/baixa)
-        - **Depreciação** — análise paralela de depreciação acumulada
+        - **Importar** — carregue as bases XLSX
+        - **Dashboard** — saldo, aquisições e movimentação
+        - **Conciliação** — divergências contábil x compras
+        - **Revisão Manual** — NFs com match aproximado
+        - **Operacional** — lançamentos manuais
+        - **Depreciação** — análise de depreciação
         """
     )
 
@@ -92,14 +83,13 @@ def main():
             for imp in importacoes:
                 st.write(
                     f"📥 **{imp['tipo']}** — {imp['nome_arquivo']} — "
-                    f"{imp['linhas_gravadas']} linhas gravadas — "
-                    f"{imp['linhas_bloqueadas']} duplicatas bloqueadas — "
+                    f"{imp['linhas_gravadas']} linhas — "
                     f"{imp['criado_em'][:16]}"
                 )
         else:
-            st.info("Nenhuma importação registrada. Comece pela página **Importar**.")
+            st.info("Nenhuma importação ainda. Vá em **Importar**.")
     except Exception as e:
-        st.warning(f"Não foi possível carregar o histórico: {e}")
+        st.warning(f"Erro ao carregar histórico: {e}")
 
 
 if __name__ == "__main__":
