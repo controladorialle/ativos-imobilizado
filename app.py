@@ -1,88 +1,66 @@
-"""Sistema de Gestão de Ativos Imobilizados - entry point."""
+"""Diagnóstico de Secrets e conexão Supabase."""
 import streamlit as st
-from supabase import create_client
 
-st.set_page_config(
-    page_title="Ativos Imobilizados",
-    page_icon="🏢",
-    layout="wide",
-)
+st.set_page_config(page_title="Diagnóstico", layout="wide")
+st.title("🔧 Diagnóstico de configuração")
 
+st.header("1. Os Secrets estão chegando?")
 
-@st.cache_resource
-def sb():
-    """Cliente Supabase reutilizável."""
+try:
     url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["anon_key"]
-    return create_client(url, key)
+    anon = st.secrets["supabase"]["anon_key"]
+    service = st.secrets["supabase"]["service_key"]
+    st.success("✅ Os 3 secrets foram lidos com sucesso")
 
+    st.write("**URL configurada:**")
+    st.code(url)
 
-def login_form():
-    st.title("🏢 Gestão de Ativos Imobilizados")
-    st.markdown("Faça login para continuar")
-    with st.form("login"):
-        email = st.text_input("E-mail")
-        senha = st.text_input("Senha", type="password")
-        ok = st.form_submit_button("Entrar", type="primary")
-    if ok:
-        try:
-            sess = sb().auth.sign_in_with_password(
-                {"email": email, "password": senha}
-            )
-            st.session_state["user"] = sess.user.email
-            st.rerun()
-        except Exception as e:
-            st.error(f"Falha no login: {e}")
+    st.write(f"**anon_key tem {len(anon)} caracteres**")
+    st.write(f"**Começa com:** `{anon[:20]}...`")
+    st.write(f"**Termina com:** `...{anon[-10:]}`")
+    st.write(f"**Tem quebra de linha?** {'⚠️ SIM (problema!)' if chr(10) in anon else '✅ NÃO'}")
+    st.write(f"**Tem espaço no começo/fim?** {'⚠️ SIM (problema!)' if anon != anon.strip() else '✅ NÃO'}")
 
+    st.write(f"**service_key tem {len(service)} caracteres**")
+    st.write(f"**Começa com:** `{service[:20]}...`")
+    st.write(f"**Termina com:** `...{service[-10:]}`")
+    st.write(f"**Tem quebra de linha?** {'⚠️ SIM (problema!)' if chr(10) in service else '✅ NÃO'}")
+    st.write(f"**Tem espaço no começo/fim?** {'⚠️ SIM (problema!)' if service != service.strip() else '✅ NÃO'}")
 
-def main():
-    if "user" not in st.session_state:
-        login_form()
-        return
+except Exception as e:
+    st.error(f"❌ Erro ao ler secrets: {e}")
+    st.stop()
 
-    st.sidebar.success(f"Logado: {st.session_state['user']}")
-    if st.sidebar.button("Sair"):
-        try:
-            sb().auth.sign_out()
-        except Exception:
-            pass
-        del st.session_state["user"]
-        st.rerun()
+st.header("2. A biblioteca supabase consegue conectar?")
+try:
+    from supabase import create_client
+    cli = create_client(url, anon)
+    st.success("✅ Cliente Supabase criado")
+except Exception as e:
+    st.error(f"❌ Erro ao criar cliente: {e}")
+    st.stop()
 
-    st.title("🏢 Gestão de Ativos Imobilizados")
-    st.markdown(
-        """
-        Use o menu lateral para navegar:
+st.header("3. Consegue consultar uma tabela?")
+try:
+    resp = cli.table("empresas").select("*").execute()
+    st.success(f"✅ Consulta funcionou! Retornou {len(resp.data)} linha(s)")
+    st.write("Dados:")
+    st.json(resp.data)
+except Exception as e:
+    st.error(f"❌ Erro na consulta: {e}")
+    st.write("**Detalhe completo do erro:**")
+    st.code(str(e))
 
-        - **Importar** — carregue as bases XLSX cruas (contábil e compras)
-        - **Dashboard** — saldo, aquisições e movimentação por categoria
-        - **Conciliação** — divergências entre contábil e compras
-        - **Revisão Manual** — NFs com match aproximado para o usuário resolver
-        - **Operacional** — lançamentos manuais (aquisição/baixa)
-        - **Depreciação** — análise paralela de depreciação acumulada
-        """
-    )
+st.header("4. Consegue testar login?")
+with st.form("teste"):
+    email = st.text_input("E-mail", value="controladoria@grupolle.com.br")
+    senha = st.text_input("Senha", type="password")
+    ok = st.form_submit_button("Testar login")
 
-    # Métricas rápidas na home
+if ok:
     try:
-        sup = sb()
-        importacoes = sup.table("importacoes").select("*").order(
-            "criado_em", desc=True
-        ).limit(5).execute().data
-        if importacoes:
-            st.subheader("Últimas importações")
-            for imp in importacoes:
-                st.write(
-                    f"📥 **{imp['tipo']}** — {imp['nome_arquivo']} — "
-                    f"{imp['linhas_gravadas']} linhas gravadas — "
-                    f"{imp['linhas_bloqueadas']} duplicatas bloqueadas — "
-                    f"{imp['criado_em'][:16]}"
-                )
-        else:
-            st.info("Nenhuma importação registrada ainda. Comece pela página **Importar**.")
+        resp = cli.auth.sign_in_with_password({"email": email, "password": senha})
+        st.success(f"✅ Login OK! Usuário: {resp.user.email}")
     except Exception as e:
-        st.warning(f"Não foi possível carregar o histórico de importações: {e}")
-
-
-if __name__ == "__main__":
-    main()
+        st.error(f"❌ Falha: {e}")
+        st.code(str(e))
