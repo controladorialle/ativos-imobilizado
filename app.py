@@ -1,76 +1,106 @@
-"""Diagnóstico profundo — mostra exatamente o que o app está vendo."""
+"""Sistema de Gestão de Ativos Imobilizados - entry point."""
 import streamlit as st
-import requests
+from supabase import create_client, ClientOptions
 
-st.set_page_config(page_title="Diagnóstico Profundo", layout="wide")
-st.title("🔬 Diagnóstico profundo")
+st.set_page_config(
+    page_title="Ativos Imobilizados",
+    page_icon="🏢",
+    layout="wide",
+)
 
-# 1. Mostrar URL e início+fim das chaves
-st.header("1. O que o Streamlit está lendo dos Secrets")
 
-try:
-    url = st.secrets["supabase"]["url"]
-    anon = st.secrets["supabase"]["anon_key"]
-    service = st.secrets["supabase"]["service_key"]
-except Exception as e:
-    st.error(f"Erro lendo secrets: {e}")
-    st.stop()
+@st.cache_resource
+def sb():
+    """Cliente Supabase reutilizável.
 
-st.write("**URL:**")
-st.code(url)
+    Limpa URL e chave para evitar problemas de espaços/duplicação.
+    Funciona com chaves Legacy (eyJ...) e novas (sb_publishable_...).
+    """
+    url = st.secrets["supabase"]["url"].strip()
+    # Remove https:// duplicado se houver
+    while url.startswith("https://https://"):
+        url = url.replace("https://https://", "https://", 1)
+    if not url.startswith("https://"):
+        url = "https://" + url
+    url = url.rstrip("/")
 
-st.write("**anon_key:**")
-st.write(f"- Total: {len(anon)} caracteres")
-st.write(f"- Primeiros 30: `{anon[:30]}`")
-st.write(f"- Últimos 20: `{anon[-20:]}`")
-st.write(f"- Tem `\\n`? {chr(10) in anon}")
-st.write(f"- Tem espaço? {' ' in anon}")
+    key = st.secrets["supabase"]["anon_key"].strip().replace("\n", "").replace("\r", "")
 
-st.write("**service_key:**")
-st.write(f"- Total: {len(service)} caracteres")
-st.write(f"- Primeiros 30: `{service[:30]}`")
-st.write(f"- Últimos 20: `{service[-20:]}`")
+    return create_client(url, key)
 
-# 2. Chamar a API REST do Supabase diretamente (sem biblioteca)
-st.header("2. Teste direto da API (sem biblioteca supabase)")
 
-url_clean = url.strip().rstrip("/")
-if not url_clean.startswith("https://"):
-    url_clean = "https://" + url_clean
-if url_clean.startswith("https://https://"):
-    url_clean = url_clean.replace("https://https://", "https://")
+def login_form():
+    st.title("🏢 Gestão de Ativos Imobilizados")
+    st.markdown("Faça login para continuar")
+    with st.form("login"):
+        email = st.text_input("E-mail")
+        senha = st.text_input("Senha", type="password")
+        ok = st.form_submit_button("Entrar", type="primary")
+    if ok:
+        try:
+            sess = sb().auth.sign_in_with_password(
+                {"email": email, "password": senha}
+            )
+            st.session_state["user"] = sess.user.email
+            st.rerun()
+        except Exception as e:
+            st.error(f"Falha no login: {e}")
+            with st.expander("Diagnóstico (clique para ver detalhes)"):
+                url_dbg = st.secrets["supabase"]["url"]
+                key_dbg = st.secrets["supabase"]["anon_key"]
+                st.write(f"URL lida: `{url_dbg}`")
+                st.write(f"Chave (primeiros 20): `{key_dbg[:20]}`")
+                st.write(f"Tamanho da chave: {len(key_dbg)}")
+                st.code(str(e))
 
-st.write(f"**URL limpa:** `{url_clean}`")
 
-test_endpoint = f"{url_clean}/rest/v1/empresas?select=*"
-headers = {
-    "apikey": anon.strip(),
-    "Authorization": f"Bearer {anon.strip()}",
-}
+def main():
+    if "user" not in st.session_state:
+        login_form()
+        return
 
-st.write(f"**Endpoint:** `{test_endpoint}`")
+    st.sidebar.success(f"Logado: {st.session_state['user']}")
+    if st.sidebar.button("Sair"):
+        try:
+            sb().auth.sign_out()
+        except Exception:
+            pass
+        del st.session_state["user"]
+        st.rerun()
 
-try:
-    r = requests.get(test_endpoint, headers=headers, timeout=10)
-    st.write(f"**Status HTTP:** {r.status_code}")
-    st.write(f"**Resposta:**")
-    st.code(r.text[:500])
-except Exception as e:
-    st.error(f"Erro de rede: {e}")
+    st.title("🏢 Gestão de Ativos Imobilizados")
+    st.markdown(
+        """
+        Use o menu lateral para navegar:
 
-# 3. Teste com biblioteca supabase
-st.header("3. Teste com biblioteca supabase")
-try:
-    from supabase import create_client
-    cli = create_client(url_clean, anon.strip())
-    st.success("✅ Cliente criado")
+        - **Importar** — carregue as bases XLSX cruas (contábil e compras)
+        - **Dashboard** — saldo, aquisições e movimentação por categoria
+        - **Conciliação** — divergências entre contábil e compras
+        - **Revisão Manual** — NFs com match aproximado para o usuário resolver
+        - **Operacional** — lançamentos manuais (aquisição/baixa)
+        - **Depreciação** — análise paralela de depreciação acumulada
+        """
+    )
+
     try:
-        resp = cli.table("empresas").select("*").execute()
-        st.success(f"✅ Consulta OK: {len(resp.data)} linhas")
-        st.json(resp.data)
-    except Exception as e2:
-        st.error(f"❌ Erro na consulta: {e2}")
-        st.code(str(e2))
-except Exception as e:
-    st.error(f"❌ Erro ao criar cliente: {e}")
-    st.code(str(e))
+        sup = sb()
+        importacoes = sup.table("importacoes").select("*").order(
+            "criado_em", desc=True
+        ).limit(5).execute().data
+        if importacoes:
+            st.subheader("Últimas importações")
+            for imp in importacoes:
+                st.write(
+                    f"📥 **{imp['tipo']}** — {imp['nome_arquivo']} — "
+                    f"{imp['linhas_gravadas']} linhas gravadas — "
+                    f"{imp['linhas_bloqueadas']} duplicatas bloqueadas — "
+                    f"{imp['criado_em'][:16]}"
+                )
+        else:
+            st.info("Nenhuma importação registrada. Comece pela página **Importar**.")
+    except Exception as e:
+        st.warning(f"Não foi possível carregar o histórico: {e}")
+
+
+if __name__ == "__main__":
+    main()
