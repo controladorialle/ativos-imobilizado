@@ -1,95 +1,76 @@
-"""Sistema de Gestão de Ativos Imobilizados - entry point."""
+"""Diagnóstico profundo — mostra exatamente o que o app está vendo."""
 import streamlit as st
-from supabase import create_client
+import requests
 
-st.set_page_config(
-    page_title="Ativos Imobilizados",
-    page_icon="🏢",
-    layout="wide",
-)
+st.set_page_config(page_title="Diagnóstico Profundo", layout="wide")
+st.title("🔬 Diagnóstico profundo")
 
+# 1. Mostrar URL e início+fim das chaves
+st.header("1. O que o Streamlit está lendo dos Secrets")
 
-@st.cache_resource
-def sb():
-    """Cliente Supabase reutilizável.
+try:
+    url = st.secrets["supabase"]["url"]
+    anon = st.secrets["supabase"]["anon_key"]
+    service = st.secrets["supabase"]["service_key"]
+except Exception as e:
+    st.error(f"Erro lendo secrets: {e}")
+    st.stop()
 
-    Aceita tanto chaves Legacy (eyJ...) quanto novas (sb_publishable_...).
-    """
-    url = st.secrets["supabase"]["url"].strip().rstrip("/")
-    if not url.startswith("https://"):
-        url = "https://" + url
-    key = st.secrets["supabase"]["anon_key"].strip()
-    return create_client(url, key)
+st.write("**URL:**")
+st.code(url)
 
+st.write("**anon_key:**")
+st.write(f"- Total: {len(anon)} caracteres")
+st.write(f"- Primeiros 30: `{anon[:30]}`")
+st.write(f"- Últimos 20: `{anon[-20:]}`")
+st.write(f"- Tem `\\n`? {chr(10) in anon}")
+st.write(f"- Tem espaço? {' ' in anon}")
 
-def login_form():
-    st.title("🏢 Gestão de Ativos Imobilizados")
-    st.markdown("Faça login para continuar")
-    with st.form("login"):
-        email = st.text_input("E-mail")
-        senha = st.text_input("Senha", type="password")
-        ok = st.form_submit_button("Entrar", type="primary")
-    if ok:
-        try:
-            sess = sb().auth.sign_in_with_password(
-                {"email": email, "password": senha}
-            )
-            st.session_state["user"] = sess.user.email
-            st.rerun()
-        except Exception as e:
-            st.error(f"Falha no login: {e}")
-            with st.expander("Mais detalhes (para debug)"):
-                st.code(str(e))
+st.write("**service_key:**")
+st.write(f"- Total: {len(service)} caracteres")
+st.write(f"- Primeiros 30: `{service[:30]}`")
+st.write(f"- Últimos 20: `{service[-20:]}`")
 
+# 2. Chamar a API REST do Supabase diretamente (sem biblioteca)
+st.header("2. Teste direto da API (sem biblioteca supabase)")
 
-def main():
-    if "user" not in st.session_state:
-        login_form()
-        return
+url_clean = url.strip().rstrip("/")
+if not url_clean.startswith("https://"):
+    url_clean = "https://" + url_clean
+if url_clean.startswith("https://https://"):
+    url_clean = url_clean.replace("https://https://", "https://")
 
-    st.sidebar.success(f"Logado: {st.session_state['user']}")
-    if st.sidebar.button("Sair"):
-        try:
-            sb().auth.sign_out()
-        except Exception:
-            pass
-        del st.session_state["user"]
-        st.rerun()
+st.write(f"**URL limpa:** `{url_clean}`")
 
-    st.title("🏢 Gestão de Ativos Imobilizados")
-    st.markdown(
-        """
-        Use o menu lateral para navegar:
+test_endpoint = f"{url_clean}/rest/v1/empresas?select=*"
+headers = {
+    "apikey": anon.strip(),
+    "Authorization": f"Bearer {anon.strip()}",
+}
 
-        - **Importar** — carregue as bases XLSX cruas (contábil e compras)
-        - **Dashboard** — saldo, aquisições e movimentação por categoria
-        - **Conciliação** — divergências entre contábil e compras
-        - **Revisão Manual** — NFs com match aproximado para o usuário resolver
-        - **Operacional** — lançamentos manuais (aquisição/baixa)
-        - **Depreciação** — análise paralela de depreciação acumulada
-        """
-    )
+st.write(f"**Endpoint:** `{test_endpoint}`")
 
-    # Métricas rápidas na home
+try:
+    r = requests.get(test_endpoint, headers=headers, timeout=10)
+    st.write(f"**Status HTTP:** {r.status_code}")
+    st.write(f"**Resposta:**")
+    st.code(r.text[:500])
+except Exception as e:
+    st.error(f"Erro de rede: {e}")
+
+# 3. Teste com biblioteca supabase
+st.header("3. Teste com biblioteca supabase")
+try:
+    from supabase import create_client
+    cli = create_client(url_clean, anon.strip())
+    st.success("✅ Cliente criado")
     try:
-        sup = sb()
-        importacoes = sup.table("importacoes").select("*").order(
-            "criado_em", desc=True
-        ).limit(5).execute().data
-        if importacoes:
-            st.subheader("Últimas importações")
-            for imp in importacoes:
-                st.write(
-                    f"📥 **{imp['tipo']}** — {imp['nome_arquivo']} — "
-                    f"{imp['linhas_gravadas']} linhas gravadas — "
-                    f"{imp['linhas_bloqueadas']} duplicatas bloqueadas — "
-                    f"{imp['criado_em'][:16]}"
-                )
-        else:
-            st.info("Nenhuma importação registrada ainda. Comece pela página **Importar**.")
-    except Exception as e:
-        st.warning(f"Não foi possível carregar o histórico de importações: {e}")
-
-
-if __name__ == "__main__":
-    main()
+        resp = cli.table("empresas").select("*").execute()
+        st.success(f"✅ Consulta OK: {len(resp.data)} linhas")
+        st.json(resp.data)
+    except Exception as e2:
+        st.error(f"❌ Erro na consulta: {e2}")
+        st.code(str(e2))
+except Exception as e:
+    st.error(f"❌ Erro ao criar cliente: {e}")
+    st.code(str(e))
