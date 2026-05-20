@@ -25,6 +25,12 @@ st.caption(
 sup = sb()
 
 # ============================================================
+# CONFIGURAÇÕES
+# ============================================================
+MIN_CHARS_BUSCA = 3  # mínimo de caracteres para acionar busca por texto
+FMT_DATA_BR = "DD/MM/YYYY"  # formato de data brasileiro
+
+# ============================================================
 # CARGA DE DADOS (cache de 60s)
 # ============================================================
 
@@ -258,9 +264,13 @@ if modo == "🔎 Por Produto":
     # ----- Busca de texto -----
     col_b, col_c = st.columns([3, 1])
     busca = col_b.text_input(
-        "Buscar produto (nome ou código)",
-        placeholder="Ex: notebook, monitor, 28031, computador...",
-        key="busca_prod"
+        f"Buscar produto (nome ou código) — mínimo {MIN_CHARS_BUSCA} caracteres",
+        placeholder="Ex: computador (acha 'microcomputador'), monitor, 28031...",
+        key="busca_prod",
+        help=(
+            f"Pressione Enter após digitar. A busca casa em qualquer posição do nome "
+            f"(ex: 'computador' encontra 'microcomputador'). Mínimo {MIN_CHARS_BUSCA} caracteres."
+        )
     )
     ordenar_por = col_c.selectbox(
         "Ordenar por",
@@ -269,7 +279,12 @@ if modo == "🔎 Por Produto":
     )
 
     if not busca:
-        st.info("👆 Digite algo para começar a busca.")
+        st.info(f"👆 Digite pelo menos {MIN_CHARS_BUSCA} caracteres e pressione Enter.")
+    elif len(busca.strip()) < MIN_CHARS_BUSCA:
+        st.warning(
+            f"⚠️ Digite pelo menos {MIN_CHARS_BUSCA} caracteres "
+            f"(você digitou {len(busca.strip())})."
+        )
     else:
         mask = (
             df_base_prod["produto_servico"].fillna("").str.contains(busca, case=False, na=False) |
@@ -360,7 +375,10 @@ if modo == "🔎 Por Produto":
                 }),
                 use_container_width=True,
                 hide_index=True,
-                height=350
+                height=350,
+                column_config={
+                    "Data": st.column_config.DateColumn(format=FMT_DATA_BR),
+                }
             )
 
             csv = resumo.to_csv(index=False).encode("utf-8")
@@ -384,10 +402,12 @@ elif modo == "📅 Por Período":
 
     cp1, cp2, cp3 = st.columns([2, 2, 2])
     dt_ini = cp1.date_input(
-        "De", value=data_min, min_value=data_min, max_value=data_max, key="dt_ini_p"
+        "De", value=data_min, min_value=data_min, max_value=data_max,
+        key="dt_ini_p", format=FMT_DATA_BR
     )
     dt_fim = cp2.date_input(
-        "Até", value=data_max, min_value=data_min, max_value=data_max, key="dt_fim_p"
+        "Até", value=data_max, min_value=data_min, max_value=data_max,
+        key="dt_fim_p", format=FMT_DATA_BR
     )
     cats_opts = sorted(df_base["categoria"].dropna().unique().tolist())
     cat_filtro = cp3.multiselect("Categoria(s)", cats_opts, default=cats_opts, key="cat_filt_p")
@@ -450,7 +470,10 @@ elif modo == "📅 Por Período":
             }),
             use_container_width=True,
             hide_index=True,
-            height=400
+            height=400,
+            column_config={
+                "Data": st.column_config.DateColumn(format=FMT_DATA_BR),
+            }
         )
 
         csv = detalhe.to_csv(index=False).encode("utf-8")
@@ -561,18 +584,32 @@ elif modo == "🏢 Por Centro de Resultado":
             )
             busca_centro = col_f2.text_input(
                 "🔍 Buscar item (produto/fornecedor)",
-                placeholder="Filtrar...",
-                key="busca_centro"
+                placeholder=f"Filtrar (mín. {MIN_CHARS_BUSCA} chars)...",
+                key="busca_centro",
+                help=(
+                    f"Busca por substring (ex: 'computador' encontra 'microcomputador'). "
+                    f"Mínimo {MIN_CHARS_BUSCA} caracteres."
+                )
             )
+
+            # Valida mínimo de caracteres na busca
+            busca_centro_efetiva = (
+                busca_centro if busca_centro and len(busca_centro.strip()) >= MIN_CHARS_BUSCA
+                else ""
+            )
+            if busca_centro and len(busca_centro.strip()) < MIN_CHARS_BUSCA:
+                st.caption(
+                    f"⚠️ Busca ignorada — digite pelo menos {MIN_CHARS_BUSCA} caracteres."
+                )
 
             def aplica_filtros(d):
                 if cat_filtro_centro != "Todas":
                     d = d[d["categoria"] == cat_filtro_centro]
-                if busca_centro:
+                if busca_centro_efetiva:
                     mask = (
-                        d["produto_servico"].fillna("").str.contains(busca_centro, case=False, na=False) |
-                        d["codprod"].astype(str).str.contains(busca_centro, na=False) |
-                        d["parceiro"].fillna("").str.contains(busca_centro, case=False, na=False)
+                        d["produto_servico"].fillna("").str.contains(busca_centro_efetiva, case=False, na=False) |
+                        d["codprod"].astype(str).str.contains(busca_centro_efetiva, na=False) |
+                        d["parceiro"].fillna("").str.contains(busca_centro_efetiva, case=False, na=False)
                     )
                     d = d[mask]
                 d = d.sort_values("data_efetiva", ascending=False)
@@ -618,7 +655,10 @@ elif modo == "🏢 Por Centro de Resultado":
                     }),
                     use_container_width=True,
                     hide_index=True,
-                    height=400
+                    height=400,
+                    column_config={
+                        "Data": st.column_config.DateColumn(format=FMT_DATA_BR),
+                    }
                 )
 
             st.divider()
@@ -656,7 +696,10 @@ elif modo == "🏢 Por Centro de Resultado":
                     }),
                     use_container_width=True,
                     hide_index=True,
-                    height=300
+                    height=300,
+                    column_config={
+                        "Data": st.column_config.DateColumn(format=FMT_DATA_BR),
+                    }
                 )
 
             # Export consolidado
@@ -737,12 +780,12 @@ elif modo == "📒 Por Conta Contábil (Razão)":
         dt_ini_r = cr1.date_input(
             "De", value=data_min_r,
             min_value=data_min_r, max_value=data_max_r,
-            key="dt_ini_razao"
+            key="dt_ini_razao", format=FMT_DATA_BR
         )
         dt_fim_r = cr2.date_input(
             "Até", value=data_max_r,
             min_value=data_min_r, max_value=data_max_r,
-            key="dt_fim_razao"
+            key="dt_fim_razao", format=FMT_DATA_BR
         )
 
         df_razao_per = df_razao[
@@ -812,7 +855,7 @@ elif modo == "📒 Por Conta Contábil (Razão)":
                 hide_index=True,
                 height=500,
                 column_config={
-                    "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                    "Data": st.column_config.DateColumn(format=FMT_DATA_BR),
                 }
             )
 
