@@ -385,7 +385,8 @@ elif modo == "📅 Por Período":
 elif modo == "🏢 Por Centro de Resultado":
     st.subheader("🏢 Ativos por Centro de Resultado")
     st.caption(
-        "Selecione um centro de custo e veja todos os ativos alocados a ele."
+        "Selecione um centro de custo e veja todos os ativos alocados a ele. "
+        "Linhas com produto identificado aparecem primeiro, ordenadas por mês."
     )
 
     centros_opts = sorted(
@@ -406,19 +407,23 @@ elif modo == "🏢 Por Centro de Resultado":
         if df_centro.empty:
             st.info("Sem ativos alocados nesse centro.")
         else:
-            # KPIs
+            # Separa em 2 grupos
+            com_produto = df_centro[df_centro["codprod"].notna()].copy()
+            sem_produto = df_centro[df_centro["codprod"].isna()].copy()
+
+            # KPIs gerais
             k1, k2, k3, k4 = st.columns(4)
             k1.metric(
                 "Valor total alocado",
                 f"R$ {df_centro['debito'].sum():,.0f}".replace(",", ".")
             )
             k2.metric(
-                "Itens (qtd)",
-                f"{int(df_centro['qtdneg'].fillna(0).sum()):,}".replace(",", ".")
+                "Com produto",
+                f"{len(com_produto)} ({100*len(com_produto)/max(len(df_centro),1):.0f}%)"
             )
             k3.metric(
-                "Produtos distintos",
-                df_centro["codprod"].nunique()
+                "Sem produto",
+                f"{len(sem_produto)} ({100*len(sem_produto)/max(len(df_centro),1):.0f}%)"
             )
             k4.metric(
                 "Notas fiscais",
@@ -468,68 +473,125 @@ elif modo == "🏢 Por Centro de Resultado":
 
             st.divider()
 
-            # Lista completa de itens alocados
-            st.markdown("##### 📋 Lista completa de itens alocados")
-
-            # Filtro de categoria dentro do centro (opcional)
+            # Filtros adicionais
             cat_opcoes = ["Todas"] + resumo_cat["categoria"].tolist()
-            cat_filtro_centro = st.selectbox(
+            col_f1, col_f2 = st.columns(2)
+            cat_filtro_centro = col_f1.selectbox(
                 "Filtrar por categoria",
                 cat_opcoes,
                 key="cat_centro_filt"
             )
-
-            df_itens = df_centro.copy()
-            if cat_filtro_centro != "Todas":
-                df_itens = df_itens[df_itens["categoria"] == cat_filtro_centro]
-
-            # Busca dentro do centro
-            busca_centro = st.text_input(
-                "🔍 Buscar item neste centro",
-                placeholder="Filtrar produtos...",
+            busca_centro = col_f2.text_input(
+                "🔍 Buscar item (produto/fornecedor)",
+                placeholder="Filtrar...",
                 key="busca_centro"
             )
-            if busca_centro:
-                mask = (
-                    df_itens["produto_servico"].str.contains(busca_centro, case=False, na=False) |
-                    df_itens["codprod"].astype(str).str.contains(busca_centro, na=False) |
-                    df_itens["parceiro"].fillna("").str.contains(busca_centro, case=False, na=False)
-                )
-                df_itens = df_itens[mask]
 
-            st.write(f"**{len(df_itens)} lançamentos** | Total: R$ {df_itens['debito'].sum():,.2f}")
+            # Função auxiliar para aplicar filtros e ordenar por mês
+            def aplica_filtros(d):
+                if cat_filtro_centro != "Todas":
+                    d = d[d["categoria"] == cat_filtro_centro]
+                if busca_centro:
+                    mask = (
+                        d["produto_servico"].fillna("").str.contains(busca_centro, case=False, na=False) |
+                        d["codprod"].astype(str).str.contains(busca_centro, na=False) |
+                        d["parceiro"].fillna("").str.contains(busca_centro, case=False, na=False)
+                    )
+                    d = d[mask]
+                # Ordena por mês (mais recente primeiro)
+                d = d.sort_values("data_efetiva", ascending=False)
+                return d
 
-            detalhe = df_itens[[
-                "data_efetiva", "categoria", "codprod", "produto_servico",
-                "qtdneg", "un", "vlrtot", "numnota", "parceiro", "codemp"
-            ]].sort_values("data_efetiva", ascending=False)
+            com_filt = aplica_filtros(com_produto)
+            sem_filt = aplica_filtros(sem_produto)
 
-            st.dataframe(
-                detalhe.rename(columns={
-                    "data_efetiva": "Data",
-                    "categoria": "Categoria",
-                    "codprod": "Cód Prod",
-                    "produto_servico": "Produto",
-                    "qtdneg": "Qtd",
-                    "un": "Un",
-                    "vlrtot": "Valor",
-                    "numnota": "NF",
-                    "parceiro": "Fornecedor",
-                    "codemp": "Emp",
-                }).style.format({
-                    "Qtd": "{:,.0f}".format,
-                    "Valor": "R$ {:,.2f}".format,
-                }),
-                use_container_width=True,
-                hide_index=True,
-                height=500
+            # ===== SEÇÃO 1: COM PRODUTO IDENTIFICADO =====
+            st.markdown("### ✅ Lançamentos COM produto identificado")
+            st.caption(
+                f"**{len(com_filt)} lançamentos** | "
+                f"Total: R$ {com_filt['vlrtot'].fillna(0).sum():,.2f}"
+                .replace(",", "X").replace(".", ",").replace("X", ".")
             )
 
-            # Export
-            csv = detalhe.to_csv(index=False).encode("utf-8")
+            if com_filt.empty:
+                st.info("Sem lançamentos com produto para os filtros atuais.")
+            else:
+                # Adiciona coluna de mês para visualização
+                com_filt_show = com_filt.copy()
+                com_filt_show["Mes"] = com_filt_show["data_efetiva"].dt.strftime("%m/%Y")
+
+                detalhe_com = com_filt_show[[
+                    "Mes", "data_efetiva", "categoria", "codprod", "produto_servico",
+                    "qtdneg", "un", "vlrtot", "numnota", "parceiro", "codemp"
+                ]]
+
+                st.dataframe(
+                    detalhe_com.rename(columns={
+                        "data_efetiva": "Data",
+                        "categoria": "Categoria",
+                        "codprod": "Cód",
+                        "produto_servico": "Produto",
+                        "qtdneg": "Qtd",
+                        "un": "Un",
+                        "vlrtot": "Valor",
+                        "numnota": "NF",
+                        "parceiro": "Fornecedor",
+                        "codemp": "Emp",
+                    }).style.format({
+                        "Qtd": "{:,.0f}".format,
+                        "Valor": "R$ {:,.2f}".format,
+                    }),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=400
+                )
+
+            st.divider()
+
+            # ===== SEÇÃO 2: SEM PRODUTO (LANÇAMENTOS CONTÁBEIS DIRETOS) =====
+            st.markdown("### ⚠️ Lançamentos SEM produto identificado")
+            st.caption(
+                f"**{len(sem_filt)} lançamentos** | "
+                f"Total: R$ {sem_filt['debito'].sum():,.2f}"
+                .replace(",", "X").replace(".", ",").replace("X", ".") +
+                " | Geralmente transferências de obra, provisões ou ajustes contábeis."
+            )
+
+            if sem_filt.empty:
+                st.info("Sem lançamentos sem produto para os filtros atuais.")
+            else:
+                sem_filt_show = sem_filt.copy()
+                sem_filt_show["Mes"] = sem_filt_show["data_efetiva"].dt.strftime("%m/%Y")
+
+                # Para os sem produto, mostra histórico contábil em vez de produto
+                detalhe_sem = sem_filt_show[[
+                    "Mes", "data_efetiva", "categoria", "numdoc",
+                    "parceiro_extraido", "debito", "codemp"
+                ]]
+
+                st.dataframe(
+                    detalhe_sem.rename(columns={
+                        "data_efetiva": "Data",
+                        "categoria": "Categoria",
+                        "numdoc": "Doc",
+                        "parceiro_extraido": "Parceiro (histórico)",
+                        "debito": "Valor",
+                        "codemp": "Emp",
+                    }).style.format({
+                        "Valor": "R$ {:,.2f}".format,
+                    }),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=300
+                )
+
+            # Export consolidado
+            st.divider()
+            todos_filt = pd.concat([com_filt, sem_filt], ignore_index=True)
+            csv = todos_filt.to_csv(index=False).encode("utf-8")
             st.download_button(
-                f"📥 Exportar centro '{centro_esc}' CSV",
+                f"📥 Exportar centro '{centro_esc}' completo CSV",
                 csv,
-                f"centro_{centro_esc.replace(' ', '_')}.csv",
+                f"centro_{centro_esc.replace(' ', '_').replace('/', '_')}.csv",
                 "text/csv"
             )
