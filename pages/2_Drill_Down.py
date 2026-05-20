@@ -24,6 +24,12 @@ st.caption(
 
 sup = sb()
 
+# ============================================================
+# CONFIGURAÇÕES
+# ============================================================
+MIN_CHARS_BUSCA = 3
+FMT_DATA_BR = "DD/MM/YYYY"
+
 
 # ============================================================
 # FUNÇÕES DE CARGA DE DADOS
@@ -257,13 +263,22 @@ with tab_saldo:
             resumo_cat.sort_values("valor_total"),
             x="valor_total", y="categoria", orientation="h",
             title="Valor ativo por categoria (R$)",
-            labels={"valor_total": "Valor (R$)", "categoria": ""}
+            labels={"valor_total": "Valor (R$)", "categoria": "Categoria"}
         )
         fig.update_layout(height=400)
         st.plotly_chart(fig, use_container_width=True)
     with col_t:
         st.dataframe(
-            resumo_cat.style.format({"valor_total": "R$ {:,.2f}".format}),
+            resumo_cat.rename(columns={
+                "categoria": "Categoria",
+                "qtd_itens": "Qtd Itens",
+                "produtos_unicos": "Produtos Únicos",
+                "valor_total": "Valor Total",
+            }).style.format({
+                "Qtd Itens": "{:,.0f}".format,
+                "Produtos Únicos": "{:,.0f}".format,
+                "Valor Total": "R$ {:,.2f}".format,
+            }),
             use_container_width=True, hide_index=True
         )
 
@@ -311,14 +326,22 @@ with tab_saldo:
     st.write(f"**{len(resumo_prod)} produtos ativos** em **{categoria_escolhida}**")
 
     busca = st.text_input(
-        "🔍 Buscar produto",
-        placeholder="Ex: monitor, notebook, impressora...",
-        key="busca_saldo"
+        f"🔍 Buscar produto (mín. {MIN_CHARS_BUSCA} caracteres)",
+        placeholder="Ex: computador (acha 'microcomputador'), monitor, impressora...",
+        key="busca_saldo",
+        help=(
+            f"Busca por substring — 'computador' encontra 'microcomputador'. "
+            f"Mínimo {MIN_CHARS_BUSCA} caracteres, pressione Enter."
+        )
     )
-    if busca:
+    if busca and len(busca.strip()) >= MIN_CHARS_BUSCA:
         resumo_prod = resumo_prod[
             resumo_prod["produto_servico"].str.contains(busca, case=False, na=False)
         ]
+    elif busca and len(busca.strip()) < MIN_CHARS_BUSCA:
+        st.caption(
+            f"⚠️ Busca ignorada — digite pelo menos {MIN_CHARS_BUSCA} caracteres."
+        )
 
     ca, cb = st.columns(2)
     ca.metric(
@@ -373,7 +396,9 @@ with tab_saldo:
 
         detalhe = pd.concat([df_prod_at, df_prod_bx])[
             ["Status", "numnota", "dtentsai", "parceiro", "qtdneg", "un", "vlrtot", "descrcencus", "codemp"]
-        ].sort_values("dtentsai", ascending=False)
+        ].copy()
+        detalhe["dtentsai"] = pd.to_datetime(detalhe["dtentsai"], errors="coerce")
+        detalhe = detalhe.sort_values("dtentsai", ascending=False)
 
         c_a, c_b, c_c = st.columns(3)
         c_a.metric("Ativos", len(df_prod_at))
@@ -393,6 +418,9 @@ with tab_saldo:
                 "Valor": "R$ {:,.2f}".format,
             }),
             use_container_width=True, hide_index=True,
+            column_config={
+                "Data": st.column_config.DateColumn(format=FMT_DATA_BR),
+            }
         )
 
         csv = detalhe.to_csv(index=False).encode("utf-8")
@@ -433,8 +461,14 @@ with tab_extrato:
     data_max = todas_datas.max().date()
 
     cp1, cp2 = st.columns(2)
-    dt_ini = cp1.date_input("De", value=data_min, min_value=data_min, max_value=data_max)
-    dt_fim = cp2.date_input("Até", value=data_max, min_value=data_min, max_value=data_max)
+    dt_ini = cp1.date_input(
+        "De", value=data_min, min_value=data_min, max_value=data_max,
+        format=FMT_DATA_BR, key="dt_ini_ext"
+    )
+    dt_fim = cp2.date_input(
+        "Até", value=data_max, min_value=data_min, max_value=data_max,
+        format=FMT_DATA_BR, key="dt_fim_ext"
+    )
 
     tipo_mov = st.multiselect(
         "Tipo de movimentação",
@@ -499,17 +533,22 @@ with tab_extrato:
             x=["aquisicao", "baixa"], y="categoria",
             orientation="h",
             title="Aquisições vs Baixas por categoria no período",
-            labels={"value": "R$", "variable": "Tipo", "categoria": ""},
+            labels={"value": "R$", "variable": "Tipo", "categoria": "Categoria"},
             barmode="group"
         )
         fig.update_layout(height=400)
         st.plotly_chart(fig, use_container_width=True)
 
         st.dataframe(
-            mov_cat.style.format({
-                "aquisicao": "R$ {:,.2f}".format,
-                "baixa": "R$ {:,.2f}".format,
-                "liquido": "R$ {:,.2f}".format,
+            mov_cat.rename(columns={
+                "categoria": "Categoria",
+                "aquisicao": "Aquisição",
+                "baixa": "Baixa",
+                "liquido": "Líquido",
+            }).style.format({
+                "Aquisição": "R$ {:,.2f}".format,
+                "Baixa": "R$ {:,.2f}".format,
+                "Líquido": "R$ {:,.2f}".format,
             }),
             use_container_width=True, hide_index=True
         )
@@ -525,49 +564,71 @@ with tab_extrato:
         key="cat_ext"
     )
 
+    # ----------------------------------------------------------
+    # Constrói extrato unificado (aquisições + baixas)
+    # ----------------------------------------------------------
+    # Colunas finais esperadas na tabela do extrato
+    COLS_EXTRATO = [
+        "Data", "Movimento", "Detalhe", "NF", "Parceiro",
+        "qtdneg", "un", "Valor", "descrcencus", "codemp"
+    ]
+
+    def normaliza_aquisicoes(df_in: pd.DataFrame) -> pd.DataFrame:
+        """Padroniza aquisições para o schema do extrato."""
+        if df_in.empty:
+            return pd.DataFrame(columns=COLS_EXTRATO)
+        out = pd.DataFrame()
+        out["Data"] = pd.to_datetime(df_in["dtmov"], errors="coerce")
+        out["Movimento"] = "🟢 AQUISIÇÃO"
+        out["Detalhe"] = df_in["produto_servico"].fillna("(sem detalhe em compras)")
+        out["NF"] = df_in["numdoc"]
+        out["Parceiro"] = df_in["parceiro"].fillna(df_in["parceiro_extraido"])
+        out["qtdneg"] = df_in["qtdneg"]
+        out["un"] = df_in["un"]
+        out["Valor"] = df_in["debito"]
+        out["descrcencus"] = df_in["descrcencus"]
+        out["codemp"] = df_in["codemp"]
+        return out[COLS_EXTRATO]
+
+    def normaliza_baixas(df_in: pd.DataFrame) -> pd.DataFrame:
+        """Padroniza baixas para o schema do extrato.
+
+        Baixas não têm quantidade/unidade/parceiro, então preenchemos com None/—.
+        """
+        if df_in.empty:
+            return pd.DataFrame(columns=COLS_EXTRATO)
+        out = pd.DataFrame()
+        out["Data"] = pd.to_datetime(df_in["dtmov"], errors="coerce")
+        out["Movimento"] = "🔴 BAIXA"
+        out["Detalhe"] = df_in["complhist"].fillna("(sem histórico)")
+        out["NF"] = df_in["numdoc"]
+        out["Parceiro"] = "—"
+        out["qtdneg"] = None   # baixas não têm qtd
+        out["un"] = None
+        out["Valor"] = df_in["credito"]
+        out["descrcencus"] = df_in["descrcencus"]
+        out["codemp"] = df_in["codemp"]
+        return out[COLS_EXTRATO]
+
     # Aquisições da categoria
-    aq_det = df_aquis_p[df_aquis_p["categoria"] == cat_esc_ext].copy()
-    aq_det["Movimento"] = "🟢 AQUISIÇÃO"
-    aq_det["Valor"] = aq_det["debito"]
-    aq_det["Data"] = aq_det["dtmov"]
-    aq_det["Detalhe"] = aq_det["produto_servico"].fillna("(sem detalhe em compras)")
-    aq_det["NF"] = aq_det["numdoc"]
-    aq_det["Parceiro"] = aq_det["parceiro"].fillna(aq_det["parceiro_extraido"])
+    aq_visivel = pd.DataFrame(columns=COLS_EXTRATO)
+    if "AQUISICAO" in tipo_mov:
+        aq_det = df_aquis_p[df_aquis_p["categoria"] == cat_esc_ext]
+        aq_visivel = normaliza_aquisicoes(aq_det)
 
     # Baixas da categoria
-    if not df_baixas_p.empty and "BAIXA" in tipo_mov:
-        bx_det = df_baixas_p[df_baixas_p["categoria"] == cat_esc_ext].copy()
-        bx_det["Movimento"] = "🔴 BAIXA"
-        bx_det["Valor"] = bx_det["credito"]
-        bx_det["Data"] = bx_det["dtmov"]
-        bx_det["Detalhe"] = bx_det["complhist"].fillna("(sem histórico)")
-        bx_det["NF"] = bx_det["numdoc"]
-        bx_det["Parceiro"] = "—"
-        bx_det["Qtd"] = None
-        bx_det["un"] = None
-        bx_det["descrcencus"] = bx_det.get("descrcencus")
-    else:
-        bx_det = pd.DataFrame()
-
-    if "AQUISICAO" not in tipo_mov:
-        aq_det = pd.DataFrame()
-
-    cols_extrato = ["Data", "Movimento", "Detalhe", "NF", "Parceiro", "qtdneg", "un", "Valor", "descrcencus", "codemp"]
-
-    if aq_det.empty:
-        aq_visivel = pd.DataFrame(columns=cols_extrato)
-    else:
-        aq_visivel = aq_det.rename(columns={"qtdneg": "qtdneg"})[cols_extrato]
-
-    if bx_det.empty:
-        bx_visivel = pd.DataFrame(columns=cols_extrato)
-    else:
-        bx_visivel = bx_det[cols_extrato]
+    bx_visivel = pd.DataFrame(columns=COLS_EXTRATO)
+    if "BAIXA" in tipo_mov and not df_baixas_p.empty:
+        bx_det = df_baixas_p[df_baixas_p["categoria"] == cat_esc_ext]
+        bx_visivel = normaliza_baixas(bx_det)
 
     extrato = pd.concat([aq_visivel, bx_visivel], ignore_index=True)
     extrato = extrato.sort_values("Data", ascending=False)
 
-    st.write(f"**{len(extrato)} movimentações** em **{cat_esc_ext}** entre {dt_ini} e {dt_fim}")
+    st.write(
+        f"**{len(extrato)} movimentações** em **{cat_esc_ext}** entre "
+        f"{dt_ini.strftime('%d/%m/%Y')} e {dt_fim.strftime('%d/%m/%Y')}"
+    )
 
     st.dataframe(
         extrato.rename(columns={
@@ -577,7 +638,10 @@ with tab_extrato:
             "Qtd": "{:,.0f}".format,
             "Valor": "R$ {:,.2f}".format,
         }),
-        use_container_width=True, hide_index=True, height=500
+        use_container_width=True, hide_index=True, height=500,
+        column_config={
+            "Data": st.column_config.DateColumn(format=FMT_DATA_BR),
+        }
     )
 
     csv = extrato.to_csv(index=False).encode("utf-8")
