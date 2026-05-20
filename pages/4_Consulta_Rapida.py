@@ -3,7 +3,7 @@
 3 modos selecionáveis:
 - 🔎 Por Produto: busca por nome/código, quantidade total
 - 📅 Por Período: aquisições em um intervalo de datas
-- 🏢 Por Centro de Resultado: ativos alocados por centro
+- 🏢 Por Centro de Resultado: ativos alocados por centro (com produto primeiro, sem produto depois)
 """
 import streamlit as st
 import pandas as pd
@@ -29,10 +29,7 @@ sup = sb()
 
 @st.cache_data(ttl=60)
 def carrega_base():
-    """Cruza lançamentos contábeis de CUSTO (débito) com itens de compra.
-
-    Retorna DataFrame único com tudo que precisamos para os 3 modos.
-    """
+    """Cruza lançamentos contábeis de CUSTO (débito) com itens de compra."""
     # Contas de CUSTO
     pc = pd.DataFrame(
         sup.table("plano_contas")
@@ -87,11 +84,9 @@ def carrega_base():
                   "parceiro", "numnota", "dtentsai"]:
             df[c] = None
 
-    # Converte datas
     df["dtmov"] = pd.to_datetime(df["dtmov"], errors="coerce")
     df["dtentsai"] = pd.to_datetime(df["dtentsai"], errors="coerce")
     df["data_efetiva"] = df["dtentsai"].fillna(df["dtmov"])
-
     return df
 
 
@@ -111,7 +106,6 @@ modo = st.radio(
     "**Selecione o modo de consulta:**",
     options=["🔎 Por Produto", "📅 Por Período", "🏢 Por Centro de Resultado"],
     horizontal=True,
-    label_visibility="visible"
 )
 
 st.divider()
@@ -136,30 +130,25 @@ df_base = df[df["codemp"].isin(empresa_sel)].copy()
 # ============================================================
 if modo == "🔎 Por Produto":
     st.subheader("🔎 Busca por Produto")
-    st.caption(
-        "Busque um produto pelo nome ou código. Veja a quantidade total adquirida."
-    )
+    st.caption("Busque um produto pelo nome ou código. Veja a quantidade total adquirida.")
 
     col_b, col_c = st.columns([3, 1])
-    with col_b:
-        busca = st.text_input(
-            "Buscar produto (nome ou código)",
-            placeholder="Ex: notebook, monitor, 28031, computador...",
-            key="busca_prod"
-        )
-    with col_c:
-        ordenar_por = st.selectbox(
-            "Ordenar por",
-            ["Quantidade ↓", "Valor ↓", "Nome A→Z"],
-            key="ord_prod"
-        )
+    busca = col_b.text_input(
+        "Buscar produto (nome ou código)",
+        placeholder="Ex: notebook, monitor, 28031, computador...",
+        key="busca_prod"
+    )
+    ordenar_por = col_c.selectbox(
+        "Ordenar por",
+        ["Quantidade ↓", "Valor ↓", "Nome A→Z"],
+        key="ord_prod"
+    )
 
     if not busca:
         st.info("👆 Digite algo para começar a busca.")
     else:
-        # Filtra
         mask = (
-            df_base["produto_servico"].str.contains(busca, case=False, na=False) |
+            df_base["produto_servico"].fillna("").str.contains(busca, case=False, na=False) |
             df_base["codprod"].astype(str).str.contains(busca, na=False)
         )
         df_busca = df_base[mask & df_base["codprod"].notna()].copy()
@@ -167,7 +156,6 @@ if modo == "🔎 Por Produto":
         if df_busca.empty:
             st.warning(f"Nenhum produto encontrado para '{busca}'.")
         else:
-            # Agrupa por produto
             resumo = (
                 df_busca.groupby(["codprod", "produto_servico", "un"], as_index=False)
                 .agg(
@@ -177,7 +165,6 @@ if modo == "🔎 Por Produto":
                 )
             )
 
-            # Ordena
             if ordenar_por == "Quantidade ↓":
                 resumo = resumo.sort_values("qtd_total", ascending=False)
             elif ordenar_por == "Valor ↓":
@@ -185,12 +172,8 @@ if modo == "🔎 Por Produto":
             else:
                 resumo = resumo.sort_values("produto_servico")
 
-            # KPIs
             k1, k2, k3 = st.columns(3)
-            k1.metric(
-                "Produtos encontrados",
-                f"{len(resumo):,}".replace(",", ".")
-            )
+            k1.metric("Produtos encontrados", f"{len(resumo):,}".replace(",", "."))
             k2.metric(
                 "Quantidade total",
                 f"{int(resumo['qtd_total'].sum()):,}".replace(",", ".")
@@ -202,7 +185,6 @@ if modo == "🔎 Por Produto":
 
             st.divider()
 
-            # Tabela
             st.dataframe(
                 resumo.rename(columns={
                     "codprod": "Cód",
@@ -220,7 +202,6 @@ if modo == "🔎 Por Produto":
                 height=400
             )
 
-            # Detalhamento de NFs ao escolher um produto
             st.divider()
             st.markdown("##### 🧾 Ver notas fiscais de um produto")
 
@@ -228,9 +209,7 @@ if modo == "🔎 Por Produto":
                 f"{r['codprod']} — {r['produto_servico'][:60]}": r['codprod']
                 for _, r in resumo.iterrows()
             }
-            label_esc = st.selectbox(
-                "Produto", options=list(opcoes.keys()), key="prod_detalhe"
-            )
+            label_esc = st.selectbox("Produto", options=list(opcoes.keys()), key="prod_detalhe")
             codprod_esc = opcoes[label_esc]
 
             df_prod = df_busca[df_busca["codprod"] == codprod_esc].copy()
@@ -259,7 +238,6 @@ if modo == "🔎 Por Produto":
                 height=350
             )
 
-            # Export
             csv = resumo.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "📥 Exportar resumo CSV",
@@ -274,11 +252,8 @@ if modo == "🔎 Por Produto":
 # ============================================================
 elif modo == "📅 Por Período":
     st.subheader("📅 Aquisições por Período")
-    st.caption(
-        "Veja tudo que foi adquirido em um intervalo de datas específico."
-    )
+    st.caption("Veja tudo que foi adquirido em um intervalo de datas específico.")
 
-    # Range de datas
     data_min = df_base["data_efetiva"].min().date() if pd.notna(df_base["data_efetiva"].min()) else date.today()
     data_max = df_base["data_efetiva"].max().date() if pd.notna(df_base["data_efetiva"].max()) else date.today()
 
@@ -289,13 +264,9 @@ elif modo == "📅 Por Período":
     dt_fim = cp2.date_input(
         "Até", value=data_max, min_value=data_min, max_value=data_max, key="dt_fim_p"
     )
-
     cats_opts = sorted(df_base["categoria"].dropna().unique().tolist())
-    cat_filtro = cp3.multiselect(
-        "Categoria(s)", cats_opts, default=cats_opts, key="cat_filt_p"
-    )
+    cat_filtro = cp3.multiselect("Categoria(s)", cats_opts, default=cats_opts, key="cat_filt_p")
 
-    # Filtra
     df_per = df_base[
         (df_base["data_efetiva"].dt.date >= dt_ini) &
         (df_base["data_efetiva"].dt.date <= dt_fim) &
@@ -305,28 +276,17 @@ elif modo == "📅 Por Período":
     if df_per.empty:
         st.warning("Sem aquisições no período/filtros selecionados.")
     else:
-        # KPIs
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric(
-            "Valor total",
-            f"R$ {df_per['debito'].sum():,.0f}".replace(",", ".")
-        )
+        k1.metric("Valor total", f"R$ {df_per['debito'].sum():,.0f}".replace(",", "."))
         k2.metric(
             "Quantidade itens",
             f"{int(df_per['qtdneg'].fillna(0).sum()):,}".replace(",", ".")
         )
-        k3.metric(
-            "Notas fiscais",
-            f"{df_per['numnota'].nunique():,}".replace(",", ".")
-        )
-        k4.metric(
-            "Produtos distintos",
-            f"{df_per['codprod'].nunique():,}".replace(",", ".")
-        )
+        k3.metric("Notas fiscais", f"{df_per['numnota'].nunique():,}".replace(",", "."))
+        k4.metric("Produtos distintos", f"{df_per['codprod'].nunique():,}".replace(",", "."))
 
         st.divider()
 
-        # Gráfico por categoria
         resumo_cat = (
             df_per.groupby("categoria", as_index=False)
             .agg(valor=("debito", "sum"))
@@ -340,7 +300,6 @@ elif modo == "📅 Por Período":
         fig.update_layout(height=400)
         st.plotly_chart(fig, use_container_width=True)
 
-        # Tabela detalhada
         st.markdown("##### Detalhamento das aquisições")
         detalhe = df_per[[
             "data_efetiva", "categoria", "numnota", "parceiro",
@@ -369,7 +328,6 @@ elif modo == "📅 Por Período":
             height=400
         )
 
-        # Export
         csv = detalhe.to_csv(index=False).encode("utf-8")
         st.download_button(
             "📥 Exportar período CSV",
@@ -380,13 +338,13 @@ elif modo == "📅 Por Período":
 
 
 # ============================================================
-# MODO 3 — POR CENTRO DE RESULTADO
+# MODO 3 — POR CENTRO DE RESULTADO (com produto primeiro)
 # ============================================================
 elif modo == "🏢 Por Centro de Resultado":
     st.subheader("🏢 Ativos por Centro de Resultado")
     st.caption(
         "Selecione um centro de custo e veja todos os ativos alocados a ele. "
-        "Linhas com produto identificado aparecem primeiro, ordenadas por mês."
+        "Linhas com produto identificado aparecem primeiro, ordenadas por mês (mais recente)."
     )
 
     centros_opts = sorted(
@@ -407,11 +365,10 @@ elif modo == "🏢 Por Centro de Resultado":
         if df_centro.empty:
             st.info("Sem ativos alocados nesse centro.")
         else:
-            # Separa em 2 grupos
             com_produto = df_centro[df_centro["codprod"].notna()].copy()
             sem_produto = df_centro[df_centro["codprod"].isna()].copy()
 
-            # KPIs gerais
+            # KPIs
             k1, k2, k3, k4 = st.columns(4)
             k1.metric(
                 "Valor total alocado",
@@ -425,14 +382,10 @@ elif modo == "🏢 Por Centro de Resultado":
                 "Sem produto",
                 f"{len(sem_produto)} ({100*len(sem_produto)/max(len(df_centro),1):.0f}%)"
             )
-            k4.metric(
-                "Notas fiscais",
-                df_centro["numnota"].nunique()
-            )
+            k4.metric("Notas fiscais", df_centro["numnota"].nunique())
 
             st.divider()
 
-            # Somatório por categoria
             st.markdown("##### 📊 Somatório por categoria")
 
             resumo_cat = (
@@ -473,7 +426,7 @@ elif modo == "🏢 Por Centro de Resultado":
 
             st.divider()
 
-            # Filtros adicionais
+            # Filtros
             cat_opcoes = ["Todas"] + resumo_cat["categoria"].tolist()
             col_f1, col_f2 = st.columns(2)
             cat_filtro_centro = col_f1.selectbox(
@@ -487,7 +440,6 @@ elif modo == "🏢 Por Centro de Resultado":
                 key="busca_centro"
             )
 
-            # Função auxiliar para aplicar filtros e ordenar por mês
             def aplica_filtros(d):
                 if cat_filtro_centro != "Todas":
                     d = d[d["categoria"] == cat_filtro_centro]
@@ -498,25 +450,23 @@ elif modo == "🏢 Por Centro de Resultado":
                         d["parceiro"].fillna("").str.contains(busca_centro, case=False, na=False)
                     )
                     d = d[mask]
-                # Ordena por mês (mais recente primeiro)
                 d = d.sort_values("data_efetiva", ascending=False)
                 return d
 
             com_filt = aplica_filtros(com_produto)
             sem_filt = aplica_filtros(sem_produto)
 
-            # ===== SEÇÃO 1: COM PRODUTO IDENTIFICADO =====
+            # SEÇÃO 1
             st.markdown("### ✅ Lançamentos COM produto identificado")
+            total_com = com_filt['vlrtot'].fillna(0).sum() if not com_filt.empty else 0
             st.caption(
                 f"**{len(com_filt)} lançamentos** | "
-                f"Total: R$ {com_filt['vlrtot'].fillna(0).sum():,.2f}"
-                .replace(",", "X").replace(".", ",").replace("X", ".")
+                f"Total: R$ {total_com:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
             )
 
             if com_filt.empty:
                 st.info("Sem lançamentos com produto para os filtros atuais.")
             else:
-                # Adiciona coluna de mês para visualização
                 com_filt_show = com_filt.copy()
                 com_filt_show["Mes"] = com_filt_show["data_efetiva"].dt.strftime("%m/%Y")
 
@@ -548,12 +498,12 @@ elif modo == "🏢 Por Centro de Resultado":
 
             st.divider()
 
-            # ===== SEÇÃO 2: SEM PRODUTO (LANÇAMENTOS CONTÁBEIS DIRETOS) =====
+            # SEÇÃO 2
             st.markdown("### ⚠️ Lançamentos SEM produto identificado")
+            total_sem = sem_filt['debito'].sum() if not sem_filt.empty else 0
             st.caption(
                 f"**{len(sem_filt)} lançamentos** | "
-                f"Total: R$ {sem_filt['debito'].sum():,.2f}"
-                .replace(",", "X").replace(".", ",").replace("X", ".") +
+                f"Total: R$ {total_sem:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") +
                 " | Geralmente transferências de obra, provisões ou ajustes contábeis."
             )
 
@@ -563,7 +513,6 @@ elif modo == "🏢 Por Centro de Resultado":
                 sem_filt_show = sem_filt.copy()
                 sem_filt_show["Mes"] = sem_filt_show["data_efetiva"].dt.strftime("%m/%Y")
 
-                # Para os sem produto, mostra histórico contábil em vez de produto
                 detalhe_sem = sem_filt_show[[
                     "Mes", "data_efetiva", "categoria", "numdoc",
                     "parceiro_extraido", "debito", "codemp"
