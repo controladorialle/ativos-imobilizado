@@ -1,9 +1,10 @@
 """Consulta Rápida — busca operacional do dia a dia.
 
-3 modos selecionáveis:
-- 🔎 Por Produto: busca por nome/código, quantidade total
+4 modos selecionáveis:
+- 🔎 Por Produto: busca por nome/código, quantidade total (com filtro multi de conta contábil/projeto)
 - 📅 Por Período: aquisições em um intervalo de datas
-- 🏢 Por Centro de Resultado: ativos alocados por centro (com produto primeiro, sem produto depois)
+- 🏢 Por Centro de Resultado: ativos alocados por centro
+- 📒 Por Conta Contábil (Razão): razão analítico de uma conta — débito, crédito, saldo acumulado
 """
 import streamlit as st
 import pandas as pd
@@ -90,6 +91,89 @@ def carrega_base():
     return df
 
 
+@st.cache_data(ttl=60)
+def lista_contas_com_lancamento():
+    """Retorna DataFrame com todas as contas que TÊM lançamento na contabilidade.
+
+    Pega direto de lancamentos_contabeis — não depende de plano_contas estar
+    sincronizado. Conta nova classificada pela contabilidade aparece aqui
+    automaticamente assim que houver o primeiro lançamento.
+
+    Também identifica contas órfãs (em lancamentos mas não em plano_contas)
+    para o usuário pedir classificação à contabilidade.
+    """
+    # Paginação explícita — Supabase limita a 1000 por padrão
+    # e a tabela de lançamentos tem milhares de linhas
+    all_rows = []
+    page_size = 1000
+    offset = 0
+    while True:
+        resp = (
+            sup.table("lancamentos_contabeis")
+            .select("codctactb,descrcta")
+            .not_.is_("codctactb", "null")
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        if not resp.data:
+            break
+        all_rows.extend(resp.data)
+        if len(resp.data) < page_size:
+            break
+        offset += page_size
+
+    if not all_rows:
+        return pd.DataFrame(columns=["codctactb", "descrcta", "no_plano"]), pd.DataFrame()
+
+    df_contas = (
+        pd.DataFrame(all_rows)
+        .drop_duplicates(subset=["codctactb"])
+        .sort_values("descrcta")
+        .reset_index(drop=True)
+    )
+
+    # Cruza com plano_contas pra identificar órfãs
+    plano = sup.table("plano_contas").select("codctactb").execute()
+    contas_no_plano = set()
+    if plano.data:
+        contas_no_plano = {p["codctactb"] for p in plano.data}
+
+    df_contas["no_plano"] = df_contas["codctactb"].isin(contas_no_plano)
+    orfas = df_contas[~df_contas["no_plano"]].copy()
+
+    return df_contas, orfas
+
+
+@st.cache_data(ttl=60)
+def carrega_razao(codctactb: int, empresas: tuple):
+    """Carrega TODOS os lançamentos (débito e crédito) de uma conta específica.
+
+    Diferente de carrega_base, esta função:
+    - Não filtra por tipo='CUSTO' em plano_contas
+    - Não filtra debito > 0 (traz crédito também)
+    - Aceita filtro de empresas
+    """
+    query = sup.table("lancamentos_contabeis").select(
+        "id,dtmov,numdoc,complhist,codcencus,descrcencus,"
+        "parceiro_extraido,debito,credito,codemp"
+    ).eq("codctactb", codctactb)
+
+    if empresas:
+        query = query.in_("codemp", list(empresas))
+
+    resp = query.execute()
+    if not resp.data:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(resp.data)
+    df["dtmov"] = pd.to_datetime(df["dtmov"], errors="coerce")
+    df["debito"] = pd.to_numeric(df["debito"], errors="coerce").fillna(0)
+    df["credito"] = pd.to_numeric(df["credito"], errors="coerce").fillna(0)
+    df = df.sort_values(["dtmov", "id"]).reset_index(drop=True)
+    df["saldo_acumulado"] = (df["debito"] - df["credito"]).cumsum()
+    return df
+
+
 with st.spinner("Carregando base..."):
     df = carrega_base()
 
@@ -104,7 +188,12 @@ if df.empty:
 
 modo = st.radio(
     "**Selecione o modo de consulta:**",
-    options=["🔎 Por Produto", "📅 Por Período", "🏢 Por Centro de Resultado"],
+    options=[
+        "🔎 Por Produto",
+        "📅 Por Período",
+        "🏢 Por Centro de Resultado",
+        "📒 Por Conta Contábil (Razão)",
+    ],
     horizontal=True,
 )
 
@@ -132,6 +221,41 @@ if modo == "🔎 Por Produto":
     st.subheader("🔎 Busca por Produto")
     st.caption("Busque um produto pelo nome ou código. Veja a quantidade total adquirida.")
 
+    # ----- Filtro de conta contábil/projeto (multi) -----
+    contas_disponiveis = (
+        df_base[["codctactb", "descrcta"]]
+        .dropna()
+        .drop_duplicates()
+        .sort_values("descrcta")
+    )
+    contas_labels = {
+        f"{int(r['codctactb'])} — {r['descrcta']}": int(r['codctactb'])
+        for _, r in contas_disponiveis.iterrows()
+    }
+
+    contas_escolhidas_labels = st.multiselect(
+        "🏷️ Filtrar por conta contábil / projeto",
+        options=list(contas_labels.keys()),
+        default=[],
+        placeholder="Todas as contas (sem filtro)",
+        help=(
+            "Selecione uma ou mais contas para restringir a busca. "
+            "Útil para isolar produtos de um projeto específico "
+            "(ex: 'Projeto Novo CDK-Maquinas e Equipamentos')."
+        )
+    )
+
+    if contas_escolhidas_labels:
+        codcts_filtro = [contas_labels[lbl] for lbl in contas_escolhidas_labels]
+        df_base_prod = df_base[df_base["codctactb"].isin(codcts_filtro)].copy()
+        st.caption(
+            f"📌 Filtrando por {len(codcts_filtro)} conta(s) — "
+            f"{len(df_base_prod)} lançamentos no escopo."
+        )
+    else:
+        df_base_prod = df_base.copy()
+
+    # ----- Busca de texto -----
     col_b, col_c = st.columns([3, 1])
     busca = col_b.text_input(
         "Buscar produto (nome ou código)",
@@ -148,10 +272,10 @@ if modo == "🔎 Por Produto":
         st.info("👆 Digite algo para começar a busca.")
     else:
         mask = (
-            df_base["produto_servico"].fillna("").str.contains(busca, case=False, na=False) |
-            df_base["codprod"].astype(str).str.contains(busca, na=False)
+            df_base_prod["produto_servico"].fillna("").str.contains(busca, case=False, na=False) |
+            df_base_prod["codprod"].astype(str).str.contains(busca, na=False)
         )
-        df_busca = df_base[mask & df_base["codprod"].notna()].copy()
+        df_busca = df_base_prod[mask & df_base_prod["codprod"].notna()].copy()
 
         if df_busca.empty:
             st.warning(f"Nenhum produto encontrado para '{busca}'.")
@@ -215,7 +339,7 @@ if modo == "🔎 Por Produto":
             df_prod = df_busca[df_busca["codprod"] == codprod_esc].copy()
             detalhe = df_prod[[
                 "numnota", "data_efetiva", "parceiro", "qtdneg", "un",
-                "vlrtot", "descrcencus", "categoria", "codemp"
+                "vlrtot", "descrcencus", "categoria", "descrcta", "codemp"
             ]].sort_values("data_efetiva", ascending=False)
 
             st.dataframe(
@@ -228,6 +352,7 @@ if modo == "🔎 Por Produto":
                     "vlrtot": "Valor",
                     "descrcencus": "Centro de Custo",
                     "categoria": "Categoria",
+                    "descrcta": "Conta Contábil",
                     "codemp": "Empresa",
                 }).style.format({
                     "Qtd": "{:,.0f}".format,
@@ -542,5 +667,164 @@ elif modo == "🏢 Por Centro de Resultado":
                 f"📥 Exportar centro '{centro_esc}' completo CSV",
                 csv,
                 f"centro_{centro_esc.replace(' ', '_').replace('/', '_')}.csv",
+                "text/csv"
+            )
+
+
+# ============================================================
+# MODO 4 — POR CONTA CONTÁBIL (RAZÃO)
+# ============================================================
+elif modo == "📒 Por Conta Contábil (Razão)":
+    st.subheader("📒 Razão da Conta Contábil")
+    st.caption(
+        "Selecione uma conta contábil para ver o razão analítico: "
+        "todos os lançamentos a débito e crédito com saldo acumulado."
+    )
+
+    df_contas, contas_orfas = lista_contas_com_lancamento()
+
+    if df_contas.empty:
+        st.warning("Nenhuma conta com lançamento encontrada.")
+        st.stop()
+
+    # Alerta de contas órfãs (em lançamentos mas não no plano_contas)
+    if not contas_orfas.empty:
+        with st.expander(
+            f"⚠️ {len(contas_orfas)} conta(s) com lançamento ainda não classificada(s) no plano_contas",
+            expanded=False
+        ):
+            st.caption(
+                "Essas contas vieram da contabilidade mas ainda não foram cadastradas em "
+                "`plano_contas` com tipo/categoria. Você pode consultá-las normalmente no "
+                "razão, mas elas não aparecem nos outros modos da Consulta Rápida (que "
+                "filtram por contas de CUSTO). Peça à contabilidade para classificá-las."
+            )
+            st.dataframe(
+                contas_orfas[["codctactb", "descrcta"]].rename(columns={
+                    "codctactb": "Código",
+                    "descrcta": "Descrição",
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    # Dropdown de conta
+    contas_labels = {
+        f"{int(r['codctactb'])} — {r['descrcta']}"
+        + ("" if r["no_plano"] else " ⚠️ não classificada"): int(r['codctactb'])
+        for _, r in df_contas.iterrows()
+    }
+
+    conta_label = st.selectbox(
+        "Conta contábil / projeto",
+        options=list(contas_labels.keys()),
+        key="razao_conta"
+    )
+    codctactb_esc = contas_labels[conta_label]
+
+    # Carrega razão respeitando filtro global de empresa
+    with st.spinner("Carregando razão da conta..."):
+        df_razao = carrega_razao(codctactb_esc, tuple(empresa_sel))
+
+    if df_razao.empty:
+        st.info("Sem lançamentos nessa conta para as empresas selecionadas.")
+    else:
+        # ----- Filtro de período opcional -----
+        data_min_r = df_razao["dtmov"].min().date() if pd.notna(df_razao["dtmov"].min()) else date.today()
+        data_max_r = df_razao["dtmov"].max().date() if pd.notna(df_razao["dtmov"].max()) else date.today()
+
+        cr1, cr2 = st.columns(2)
+        dt_ini_r = cr1.date_input(
+            "De", value=data_min_r,
+            min_value=data_min_r, max_value=data_max_r,
+            key="dt_ini_razao"
+        )
+        dt_fim_r = cr2.date_input(
+            "Até", value=data_max_r,
+            min_value=data_min_r, max_value=data_max_r,
+            key="dt_fim_razao"
+        )
+
+        df_razao_per = df_razao[
+            (df_razao["dtmov"].dt.date >= dt_ini_r) &
+            (df_razao["dtmov"].dt.date <= dt_fim_r)
+        ].copy()
+
+        # Recalcula saldo acumulado dentro do período filtrado
+        # (mantém o saldo histórico até a data inicial como saldo de abertura)
+        saldo_abertura = (
+            df_razao[df_razao["dtmov"].dt.date < dt_ini_r]
+            .assign(mov=lambda d: d["debito"] - d["credito"])["mov"].sum()
+        )
+        df_razao_per = df_razao_per.sort_values(["dtmov", "id"]).reset_index(drop=True)
+        df_razao_per["saldo_acumulado"] = (
+            saldo_abertura + (df_razao_per["debito"] - df_razao_per["credito"]).cumsum()
+        )
+
+        if df_razao_per.empty:
+            st.warning("Sem lançamentos nesse período.")
+        else:
+            # ----- KPIs -----
+            total_debito = df_razao_per["debito"].sum()
+            total_credito = df_razao_per["credito"].sum()
+            saldo_final = saldo_abertura + (total_debito - total_credito)
+
+            def fmt_brl(v):
+                return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Saldo abertura", fmt_brl(saldo_abertura))
+            k2.metric("Total débito", fmt_brl(total_debito))
+            k3.metric("Total crédito", fmt_brl(total_credito))
+            k4.metric("Saldo final", fmt_brl(saldo_final))
+
+            st.divider()
+
+            # ----- Tabela do razão -----
+            st.markdown(f"##### Lançamentos da conta `{codctactb_esc}` — {df_contas[df_contas['codctactb']==codctactb_esc]['descrcta'].iloc[0]}")
+            st.caption(
+                f"{len(df_razao_per)} lançamentos | "
+                f"Período: {dt_ini_r.strftime('%d/%m/%Y')} a {dt_fim_r.strftime('%d/%m/%Y')}"
+            )
+
+            df_show = df_razao_per[[
+                "dtmov", "numdoc", "complhist", "parceiro_extraido",
+                "descrcencus", "debito", "credito", "saldo_acumulado", "codemp"
+            ]].copy()
+
+            st.dataframe(
+                df_show.rename(columns={
+                    "dtmov": "Data",
+                    "numdoc": "Doc",
+                    "complhist": "Histórico",
+                    "parceiro_extraido": "Parceiro",
+                    "descrcencus": "Centro de Custo",
+                    "debito": "Débito",
+                    "credito": "Crédito",
+                    "saldo_acumulado": "Saldo Acumulado",
+                    "codemp": "Emp",
+                }).style.format({
+                    "Débito": lambda v: fmt_brl(v) if v else "",
+                    "Crédito": lambda v: fmt_brl(v) if v else "",
+                    "Saldo Acumulado": fmt_brl,
+                }),
+                use_container_width=True,
+                hide_index=True,
+                height=500,
+                column_config={
+                    "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                }
+            )
+
+            # ----- Export CSV -----
+            csv = df_show.to_csv(index=False).encode("utf-8")
+            descr_safe = (
+                df_contas[df_contas['codctactb']==codctactb_esc]['descrcta'].iloc[0]
+                .replace(' ', '_').replace('/', '_').replace('(', '').replace(')', '')
+            )
+            st.download_button(
+                f"📥 Exportar razão CSV",
+                csv,
+                f"razao_{codctactb_esc}_{descr_safe}_{dt_ini_r}_a_{dt_fim_r}.csv",
                 "text/csv"
             )
