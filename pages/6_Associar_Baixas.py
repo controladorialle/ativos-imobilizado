@@ -8,10 +8,10 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 from app import sb
+from utils.auth import requer_perfil
 
-if "user" not in st.session_state:
-    st.warning("Faça login primeiro.")
-    st.stop()
+# Bloqueia acesso: admin e editor podem entrar (leitor não)
+requer_perfil(["admin", "editor"])
 
 st.title("🔗 Associar Baixas a Itens Imobilizados")
 st.caption(
