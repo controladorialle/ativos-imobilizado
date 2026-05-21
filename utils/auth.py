@@ -1,10 +1,15 @@
 """Helper de autenticacao e controle de perfil."""
 import streamlit as st
+from supabase import create_client
 
 
+SUPABASE_URL = "https://vyxcttiiemzaxqjxtspc.supabase.co"
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ5eGN0dGlpZW16YXhxanh0c3BjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMjA3MjUsImV4cCI6MjA5NDY5NjcyNX0.kzwqS7gZSv8xVuuAW2eH4YLw2JF9ECIxK0X0hH5JL9g"
+
+
+@st.cache_resource
 def _get_supabase():
-    from app import sb
-    return sb()
+    return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 
 def get_email_usuario():
