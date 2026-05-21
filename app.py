@@ -45,13 +45,15 @@ def login_form():
                 st.code(str(e))
 
 
+
 def main():
     if "user" not in st.session_state:
         login_form()
         return
 
     st.sidebar.success(f"Logado: {st.session_state['user']}")
-   if st.sidebar.button("Sair"):
+
+    if st.sidebar.button("Sair"):
         try:
             sb().auth.sign_out()
         except Exception:
@@ -59,7 +61,7 @@ def main():
         del st.session_state["user"]
         st.rerun()
 
-    # TESTE TEMPORARIO — vamos remover depois
+    # TESTE TEMPORARIO
     from utils.auth import get_perfil_usuario
     perfil_teste = get_perfil_usuario()
     st.sidebar.info(f"Perfil detectado: {perfil_teste}")
@@ -68,7 +70,6 @@ def main():
     st.markdown(
         """
         Use o menu lateral para navegar:
-
         - **Importar** — carregue as bases XLSX
         - **Dashboard** — saldo, aquisições e movimentação
         - **Conciliação** — divergências contábil x compras
@@ -95,7 +96,5 @@ def main():
             st.info("Nenhuma importação ainda. Vá em **Importar**.")
     except Exception as e:
         st.warning(f"Erro ao carregar histórico: {e}")
-
-
 if __name__ == "__main__":
     main()
