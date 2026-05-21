@@ -3,10 +3,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from app import sb
+from utils.auth import requer_perfil
 
-if "user" not in st.session_state:
-    st.warning("Faça login primeiro.")
-    st.stop()
+# Bloqueia acesso: admin, editor e leitor podem ver
+requer_perfil(["admin", "editor", "leitor"])
 
 st.title("📉 Análise de Depreciação Acumulada")
 st.caption(
@@ -22,7 +22,6 @@ def carrega():
 
 
 df = carrega()
-
 if df.empty:
     st.info("Sem dados ainda. Importe as bases primeiro.")
     st.stop()
