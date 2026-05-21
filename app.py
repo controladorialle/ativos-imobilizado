@@ -1,9 +1,9 @@
-"""Sistema de Gestão de Ativos Imobilizados - chaves embutidas (emergência)."""
+"""Sistema de Gestao de Ativos Imobilizados - chaves embutidas (emergencia)."""
 import streamlit as st
 from supabase import create_client
 
 # ============================================================
-# CHAVES DO SUPABASE — SUBSTITUA AS 3 LINHAS ABAIXO
+# CHAVES DO SUPABASE
 # ============================================================
 SUPABASE_URL = "https://vyxcttiiemzaxqjxtspc.supabase.co"
 SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ5eGN0dGlpZW16YXhxanh0c3BjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMjA3MjUsImV4cCI6MjA5NDY5NjcyNX0.kzwqS7gZSv8xVuuAW2eH4YLw2JF9ECIxK0X0hH5JL9g"
@@ -45,7 +45,6 @@ def login_form():
                 st.code(str(e))
 
 
-
 def main():
     if "user" not in st.session_state:
         login_form()
@@ -58,11 +57,10 @@ def main():
             sb().auth.sign_out()
         except Exception:
             pass
+        from utils.auth import limpar_cache_perfil
+        limpar_cache_perfil()
         del st.session_state["user"]
         st.rerun()
-        
-
-      
 
     st.title("🏢 Gestão de Ativos Imobilizados")
     st.markdown(
@@ -94,5 +92,7 @@ def main():
             st.info("Nenhuma importação ainda. Vá em **Importar**.")
     except Exception as e:
         st.warning(f"Erro ao carregar histórico: {e}")
+
+
 if __name__ == "__main__":
     main()
