@@ -3,10 +3,10 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 from app import sb
+from utils.auth import requer_perfil
 
-if "user" not in st.session_state:
-    st.warning("Faça login primeiro.")
-    st.stop()
+# Bloqueia acesso: admin e editor podem entrar (leitor não)
+requer_perfil(["admin", "editor"])
 
 st.title("📝 Lançamento manual")
 st.caption("Registre uma aquisição ou baixa sem precisar fazer upload de arquivo.")
@@ -28,7 +28,6 @@ with tab1:
     with st.form("mov"):
         tipo = st.selectbox("Tipo de movimentação", ["AQUISICAO", "BAIXA"])
         codemp = st.selectbox("Empresa", [1, 2])
-
         if not contas.empty:
             contas_custo = contas[contas["tipo"] == "CUSTO"].sort_values("descrcta")
             opcoes_conta = {
@@ -39,15 +38,12 @@ with tab1:
             codctactb = opcoes_conta[label]
         else:
             codctactb = st.number_input("Código da conta (CODCTACTB)", step=1, format="%d")
-
         numdoc = st.text_input("Nº documento (opcional)")
         parceiro = st.text_input("Fornecedor / contraparte")
         valor = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
         data_mov = st.date_input("Data", value=date.today())
         desc = st.text_area("Descrição")
-
         ok = st.form_submit_button("Registrar", type="primary")
-
     if ok:
         if valor <= 0:
             st.error("Valor precisa ser maior que zero.")
