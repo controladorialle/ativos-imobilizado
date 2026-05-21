@@ -51,13 +51,18 @@ def main():
         return
 
     st.sidebar.success(f"Logado: {st.session_state['user']}")
-    if st.sidebar.button("Sair"):
+   if st.sidebar.button("Sair"):
         try:
             sb().auth.sign_out()
         except Exception:
             pass
         del st.session_state["user"]
         st.rerun()
+
+    # TESTE TEMPORARIO — vamos remover depois
+    from utils.auth import get_perfil_usuario
+    perfil_teste = get_perfil_usuario()
+    st.sidebar.info(f"Perfil detectado: {perfil_teste}")
 
     st.title("🏢 Gestão de Ativos Imobilizados")
     st.markdown(
