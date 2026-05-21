@@ -62,9 +62,24 @@ def main():
         st.rerun()
 
     # TESTE TEMPORARIO
-    from utils.auth import get_perfil_usuario
-    perfil_teste = get_perfil_usuario()
-    st.sidebar.info(f"Perfil detectado: {perfil_teste}")
+
+
+
+    # DIAGNOSTICO TEMPORARIO
+    from utils.auth import _get_supabase
+    email_logado = st.session_state.get("user")
+    st.sidebar.info(f"Email logado: {repr(email_logado)}")
+    st.sidebar.info(f"Tamanho: {len(email_logado) if email_logado else 0}")
+    try:
+        resp = _get_supabase().table("usuarios_app").select("email, perfil, ativo").execute()
+        st.sidebar.info(f"Linhas na tabela: {len(resp.data)}")
+        for linha in resp.data:
+            st.sidebar.write(linha)
+    except Exception as e:
+        st.sidebar.error(f"Erro consultando: {e}")
+
+
+    
 
     st.title("🏢 Gestão de Ativos Imobilizados")
     st.markdown(
