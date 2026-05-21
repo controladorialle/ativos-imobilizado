@@ -5,10 +5,10 @@ import uuid
 from app import sb
 from etl.parser_contabil import parse as parse_cont
 from etl.parser_compras import parse as parse_comp
+from utils.auth import requer_perfil
 
-if "user" not in st.session_state:
-    st.warning("Faça login primeiro.")
-    st.stop()
+# Bloqueia acesso: só ADMIN pode importar
+requer_perfil(["admin"])
 
 st.title("📥 Importar bases (XLSX cru)")
 st.caption("Suba os arquivos exatamente como saem do ERP — o sistema cuida do resto.")
